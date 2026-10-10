@@ -1,0 +1,224 @@
+{
+  "acted_flag": 6179024,
+  "acted_len": 404,
+  "acted_gran": "u32",
+  "located_at": "2026-09-20 14:42:21",
+  "note": "★09-20 定位：公孙越(134)与高览(148)各行动一次，两次均 0->1 且同数组同粒度(u32)。基址 0x5E48D0 + idx*4。⛔别用「全0/1区自动扩展」定基址——前面 22 格是无关数据，会把基址误算成 0x5E4878（偏 88 字节 = 22*4），导致 idx 整体错位 22。",
+  "game_save_rva": "0x49F99",
+  "game_load_rva": "0x4A13E",
+  "game_afterload_rva": "0x44A205",
+  "sig": "int __cdecl SaveGame(const char *fname); int __cdecl LoadGame(const char *fname); int __cdecl AfterLoad(void);",
+  "arg": "参数是任意文件名，内部 sprintf(path,\"%s%s\",\"cd-rom/\",fname) ⇒ 可写到独立文件 ZYSNAP.001，⛔不碰官方 C3KSAVE.001~008。返回值 1=成功（打开失败时写 0x560CB0=100）。",
+  "caller": "Save <- 0x41D254（push [0x4B7B74+eax*4] = 文件名表[slot]；pop ecx 清栈 ⇒ cdecl 1 参）；Load <- 0x414B50（同款传参，成功后紧跟 call 0x44A205）",
+  "evidence": "Save: CreateFileA(access=0xC0000000 R|W, share=1, NULL, CREATE_ALWAYS=2, attr=0x80)；Load: CreateFileA(access=0x80000000 R, share=1, NULL, OPEN_EXISTING=3, attr=0x80)。二者都用 WriteFile/ReadFile 循环遍历段表 0x4B7BB8..0x4B7DC0（每项 8 字节 {ptr,len}），收尾 CloseHandle + 日志（'SaveRandomSeed R:%04x...' / 'RestoreRandomSeed ...'）。",
+  "other_addr": {
+    "savename_table": "0x4B7B74（8 项 C3KSAVE.001..008 的 char*；[-4]=0x4B7B70 处是 \"cd-rom/\"）",
+    "save_buffer": "0x6005C0 起（Save 逐字段 pack 到此处，可见 mov %ax,0x6005c2 / c4 / c6 / c8 / ca 一连串）",
+    "fmt_path": "0x48C32C = \"%s%s\"",
+    "err_code": "0x560CB0（打开失败时写入 100）"
+  },
+  "located_at2": "2026-09-23 15:30",
+  "note2": "★09-23 v62 起：overlay 的 ← / → 改为直调这两个函数（写到 cd-rom\\ZYSNAP.00N），取代 v55~v61 的全内存快照（那个方案因 TOCTOU/显卡 TDR 连崩六版）。调用必须放在游戏主线程的帧内（overlay 的 game_tick，挂在 on_frame 里），⛔禁止在键盘钩子线程里直接调用。Ctrl+Alt+D = 取证：Load ZYSNAP.001 → 立刻再存 ZYSNAP.DIF → 字节比对，差异 0 = Load 精准还原。",
+  "located_at3": "2026-09-23 16:37（v65 全链路打通，用户实测「这次可以了」）",
+  "seg_table": {
+    "addr": "0x4B7BB8 .. 0x4B7DC0",
+    "format": "每项 8 字节 {ptr(u32), len(u32)}",
+    "count": 65,
+    "total_bytes": 43252,
+    "file_size": 43316,
+    "file_size_note": "43252 + 64 字节头 = 43316 = 存档文件实际大小（逐字节吻合 ⇒ 解析无误）",
+    "insight": "★65 段**全部落在 0x5D0000..0x600000 之内**（占该 192KB 的 22%）。其余 153356 字节是官方**不存**的运行期区。"
+  },
+  "not_in_save": {
+    "命令点/令牌 0x5EAA60": "⛔不在任何段内",
+    "已行动数组 0x5E48D0": "⛔不在任何段内（基址见 acted_flag）",
+    "8槽摘要表 0x5617FC": "⛔不在任何段内",
+    "insight": "⇒ 官方 Save/Load 不覆盖这些 ⇒ 这正是「读档后令牌没恢复、武将仍是已行动」的原因，也是官方读档必然「跳下个季度」的原因：季度推进是它重置这批状态的唯一手段。"
+  },
+  "trace_vars": {
+    "0x5620F4": "读档返回值（原流程 0x414B58 写入）；直调业务函数时 = 0，走官方流程后 = 1",
+    "0x561560": "读档选中的槽号（原流程 0x414B1D 写入）；直调时 = -1，走官方流程后 = 实际槽号（实测 =5 ⇒ 用户读的是 5 号=公孙瓒档，与其口述吻合）",
+    "0x5620F0": "当前游戏对象指针（游戏内非 0，实测 0x0B3C7B90；开始界面时未测）",
+    "usage": "★判断「官方流程走没走」的硬判据。⚠被写过就不会自动复位（读同一槽两次不可区分）⇒ 不宜作自动触发。"
+  },
+  "official_load_flow": {
+    "menu_driver": "0x414ABD（读档菜单的帧驱动函数，协作式状态机的一个状态）",
+    "state_obj": "uiobj = *(eax)；uiobj->[4]=下一状态函数、->[0xc]=步号、->[0x58]=选中槽、->[0x18+8i]=8项槽表",
+    "steps": [
+      "0x414B1D  写 0x561560 = 选中槽",
+      "0x414B28  从摘要表 0x5617FC[槽*20] 取势力 → 写 0x5F8440 / 0x5FCD60",
+      "0x414B3F  call 0x44A36A（按势力重算表指针；写 0x6005FC/0x600C4C/0x600E94 等一批 .rdata 表指针，该区在 0x600000 之上）",
+      "0x414B50  call 0x44A13E (LoadGame)",
+      "0x414B5F  call 0x44A205 (AfterLoad)",
+      "0x414BAC  成功时 uiobj->[4] = 0x414394（读档完成后的下一状态）；失败时 = 0x414782",
+      "0x414B99  复位 uiobj->[0x58]=-1、[0xc]=0、[0x5a]=0",
+      "5) 0x414B3F call 0x44A36A -- 按当前势力重算静态表指针（v68 起已补做）",
+      "8) 0x414BAC movl $0x414394,[esi+4] -- 界面状态机跳转，需 runtime UI 对象，静态拿不到 => 不做"
+    ],
+    "afterload_truth": "★纠正：AfterLoad(0x44A205) **不是**「对象表重建」，而是**刷新存档菜单的 8 槽摘要表**——清零 0x5617FC..0x56189C（8×20 字节）后逐个打开 cd-rom/C3KSAVE.00N 读 0x40 字节头填表。⇒ 它对游戏状态还原**没有作用**（v64 加了它照样没反应，v65 有效全靠 sidecar），且读的是官方 C3KSAVE、与我们自定义文件名无关。",
+    "key_fact": "★★★读档入口**只在开始界面**（用户 09-23 原话「游戏里面不能直接读档，得退回开始界面再点击读档」）⇒ 官方读档 = 「从开始界面进入游戏」的整套初始化流程。"
+  },
+  "kill_list": [
+    "⛔在游戏内直接调 LoadGame 让状态生效（数据对、流程脱节 ⇒ 菜单静默失效）",
+    "⛔把 objdump 的 VA 当 RVA（AfterLoad 血案：base+0x44A205=0x84A205 野地址崩进程）",
+    "⛔Expect AfterLoad 能重建游戏状态（它只刷新存档菜单摘要表）",
+    "⛔自造全内存快照（v55~v61 连崩六版：TOCTOU、显卡 TDR）",
+    "v67 官方读档文件名顶替（09-23 用户裁定弃用：污染官方菜单、可控性差）",
+    "v68 起 sidecar 不扩展到 0x600000+（BSS 混运行期资源指针，盲覆盖=悬空指针）"
+  ],
+  "game_prep_rva": 303978,
+  "game_prep_sig": "int __cdecl PrepFactionTables(void)  /* 无参、只写静态地址、幂等 */\n  mov 0x5f8440,%esi -> 按势力号分支，把 3 组静态表基址写进 0x6005FC/0x600C4C/0x600E94\n  （步长 0x40/0x3A/0x22，源表在 .rdata）；并写 0x5E2674/0x5DD454（按 0x4E538A/0x4E5396 查表）",
+  "game_prep_note": "官方读档流程 0x414B3F 在 LoadGame 之前调用；v68 起放在 sidecar 之后调用（用最终势力号）",
+  "pe_sections": {
+    ".text": {
+      "va": 4198400,
+      "vsize": 547336,
+      "raw": 548864
+    },
+    ".rdata": {
+      "va": 4747264,
+      "vsize": 11858,
+      "raw": 12288
+    },
+    ".data": {
+      "va": 4759552,
+      "vsize": 1637652,
+      "raw": 532480
+    },
+    ".rsrc": {
+      "va": 6397952,
+      "vsize": 4472,
+      "raw": 8192
+    }
+  },
+  "bss_insight": {
+    "file_init_range": "0x48A000..0x50C000（.data 里文件带初始值的部分）",
+    "bss_range": "0x50C000..0x619D14（1079KB，文件里无初始数据 => 启动清零、全靠运行期写）",
+    "sidecar_covers": "0x5D0000..0x600000（192KB）",
+    "gap_lo": "0x50C000..0x5D0000（784KB 未覆盖）",
+    "gap_hi": "0x600000..0x619D14（103KB 未覆盖）",
+    "why_not_extend": "BSS 里混有运行期资源指针（如 0x5620F0 = 堆上 UI 对象指针）；0x6013C0 是 UI 对象池、0x6123C8 是字符串缓冲 => 盲覆盖会把悬空指针写回去。0x6005FC 那三组表指针由 0x44A36A 负责重算，不需要 sidecar 还原。",
+    "measured": "0x600000..0x61A000 间距 3 秒采样 0 字节变化 => 非渲染缓冲，覆盖不引发 TDR"
+  },
+  "proven_workflow_v68": {
+    "save": "游戏内 Ctrl+Alt+回车 ->「存档」-> 选第 N 格 -> Ctrl+Alt+← （官方 SaveGame 写 cd-rom\\ZYSNAP.00N + sidecar .MEM）",
+    "load": "退回开始界面 -> 用「官方读档」读「任意一格」-> 进游戏（官方菜单零改动、随时可读官方档）",
+    "auto": "overlay 识别到\"刚从标题进入游戏 + 读档痕迹变量成立\"，延迟 300 帧后自动补回快照 => 不用再按 →",
+    "manual_fallback": "Ctrl+Alt+回车 ->「存档」-> Ctrl+Alt+→ 手动读快照（自动没触发时用）",
+    "detect_double_judge": "fromTitle(pf 0->有效) AND (0x561560 ∈ 0..7) AND (0x5620F4 == 1)；单看痕迹会被游戏自身写操作误触发"
+  },
+  "proven_workflow_v65_old": {
+    "status": "✅ 2026-09-23 实测通过（含跨势力：读公孙瓒5号档 → 载入马腾快照，授官/外交等原本失效的菜单全部正常）",
+    "save": "游戏内 → Ctrl+Alt+回车 开功能菜单 → 「存档」→ Ctrl+Alt+↑↓ 选档 → Ctrl+Alt+← 存（写 cd-rom\\ZYSNAP.00N + ZYSNAP.00N.MEM）",
+    "load": "退回开始界面 → 官方「读档」随便读一个档 → 进入游戏内 → Ctrl+Alt+回车 →「存档」→ Ctrl+Alt+→ 读回快照",
+    "why_read_a_random_slot": "★借官方流程把界面/状态机初始化走对；直调业务函数会造成「数据对了但菜单静默失效」。业务函数做不到的那部分，交给官方流程。",
+    "sidecar": {
+      "lo": "0x5D0000",
+      "hi": "0x600000",
+      "size": 196608,
+      "file": "cd-rom\\ZYSNAP.00N.MEM",
+      "order": "LoadGame → AfterLoad → sidecar 回写（最后落地，不被重建流程覆盖）",
+      "io": "ReadProcessMemory / WriteProcessMemory（失败只计数，⛔不会 AV）"
+    }
+  },
+  "flow_state_zone": {
+    "range": "0x561500..0x562400（3.8KB，v70 起纳入 sidecar 第二段）",
+    "why": "游戏有「季度推进阶段状态机」：季度结束存档 -> 进入下一季度 -> 抽随机事件 -> 各势力依次内政。该区存的是\"当前走到哪一步\"，与数据段分开 => 只还原数据会表现为\"数据对了但操作点不动\"",
+    "0x5618A4": "阶段计数器（0x414C20 状态函数里 incl；另有 movl $1 / $2）",
+    "0x56217C": "阶段标志（$1 / $2 / 清 0，多处写）",
+    "0x5618BC": "全程序访问 162 次的最高频状态变量",
+    "0x56189C": "8 槽摘要表（0x5617FC 起 8x20）末尾",
+    "0x562190": "当前对象指针（堆）",
+    "measured": "3 秒采样 0 字节变化（稳定可覆盖）；但含 113 个疑似堆指针（0x0B3C7B90 / 0x027F0250 等）",
+    "write_policy": "★指针保护式写回：疑似堆指针（0x01000000..0x7F000000）用当前值顶替，等价于跳过，只计数"
+  },
+  "proven_workflow_v70": {
+    "save": "游戏内 Ctrl+Alt+回车 ->「存档」-> 选第 N 格 -> Ctrl+Alt+←（官方 SaveGame 写 ZYSNAP.00N + sidecar: 主192KB + 流程3.8KB）",
+    "load_direct": "游戏内 Ctrl+Alt+回车 ->「存档」-> Ctrl+Alt+→（v70 补了流程状态区后，理论上可直接生效，待实测确认）",
+    "load_via_official": "若直接读仍失效：退回开始界面 -> 官方读档读任意一格 -> 进游戏 -> Ctrl+Alt+→",
+    "note": "官方档是\"季度末\"，快照是\"任意时刻\"，两者不是同一时间点 => 经官方读档进入时会被快照整体覆盖，读哪档无所谓"
+  },
+  "train_arr": 6201740,
+  "train_offset_from_runtime": 48140,
+  "train_stride": 4,
+  "train_range": "0..100",
+  "train_note": "训练度(部队练度,影响战力)。base=RUNTIME_BASE(0x5DE580)+0xBC0C，索引=武将编号，stride=4。",
+  "train_evidence": "差分三连验证(09-23)：马腾idx302 80→84、韩遂idx90 70→78各命中；阎行idx17未训练纯预测=80与UI\"练\"列吻合",
+  "train_ui_col": "武将列表\"练\"列（如 阎行80/战力864、韩遂78/战力2840、马腾84/战力2583）",
+  "train_degree_arr": 6201740,
+  "cmd_point_arr": 6203996,
+  "cmd_point_note": "命令点数组（+势力编号*4）。扣点实证：训练 -1(0x440F03) / 征兵 -3(0x43D35F,0x43DD8F,-0x43D525) / 其它内政 -2(0x43DF26,0x43E1AA) / -4(0x43E3B6) / -5(0x43D757,0x43D931,0x43DBBE,0x43E69A,0x43EA27)；★执行体本身只做 decl/sub 不做余额检查（余额闸在命令可选性那一层）⇒ 批量实现必须在入口自查，证明：0x5EAA5C 读点仅 2 处。各命令扣点后普遍紧跟 lea 0x5EAA5C→call 0x43D07C（0x43D03F=界面/提示设置），唯训练执行体不调它。",
+  "game_fn_add_train": {
+    "rva": 230335,
+    "va": 4424639,
+    "sig": "void add_train(idx,delta) 训练度+=delta 钳[0,99]",
+    "err_str": "0x4B5148 Shift-JIS: データ破壊 in add_train：部隊番号異常 %d",
+    "range": "idx 1..403"
+  },
+  "game_fn_train_ability": {
+    "rva": 230847,
+    "va": 4425151,
+    "sig": "int f(idx) 参与增量的能力值(取 0x5FBB6C[idx] 与 0x5FCD64[idx] 较大者)"
+  },
+  "game_fn_game_rand": {
+    "rva": 226905,
+    "va": 4421209,
+    "sig": "u16 rng(void) 游戏自带随机数"
+  },
+  "game_fn_add_exp": {
+    "rva": 230398,
+    "va": 4424702,
+    "sig": "void g(idx,1) 副属性+1（>99 走段位晋升）"
+  },
+  "game_fn_refresh_power": {
+    "rva": 231810,
+    "va": 4426114,
+    "sig": "void h(idx) 重算该部隊战力，结果写 0x5E5C70+idx*4，钳<=9999"
+  },
+  "train_cmd_body": {
+    "va": 4460191,
+    "rva": 265887,
+    "note": "玩家「训练」命令执行体；delta=((rnd%41)+80)*能力*30/训练度/100；顺序 add_train→add_exp→已行动|=1→命令点--→战力重算"
+  },
+  "cmd_help_table": 5152192,
+  "cmd_help_table_note": "命令帮助文本表16项：征兵0-2 配兵3-4 训练5-8 水军9-11 调动12-15（用于识别命令分组）",
+  "cmd_point_writers": [
+    4445023,
+    4445477,
+    4446039,
+    4446513,
+    4447166,
+    4447631,
+    4448038,
+    4448341,
+    4448682,
+    4449206,
+    4449946,
+    4450855,
+    4460291
+  ],
+  "unit_idx_max": 403,
+  "unit_idx_max_evidence": "★三重独立证据：①结构相邻 CHAR_LOC_ARR(0x5DD458)+404*4 = 0x5DDAA8 = 农业数组基址（严丝合缝）②游戏自己的行动统计循环只遍历 0..403（cmp $0x650,%eax @0x443C9B）③add_train 自带 1..403 校验(0x193)。另：忠诚(0xB5BC) 与 训练度(0xBC0C) 相距恰 404*4 ⇒ 武力那一族数组同为 404 格。⇒ idx>403 读到的是别的数组（位置[404+]=农业数组）；v79 起所有枚举/校验一律收到 403。",
+  "acted_flag_bits": "bit0=0x1 本季已行动（内政，游戏统计器 0x443C39 读它）；bit2=0x4 另一状态（0x43DF1E/0x43E03F 写）；bit3=0x8（0x43E195 写）；orl $0x21 见 5 处（0x42324D 等）",
+  "event_msg_table": 5151544,
+  "event_msg_table_note": "更新阶段事件消息表（按索引取串，20 项）。idx1-13 日常(天候/灾害/暴动/升段)，idx14-19 势力灭亡族：14=主君去世有继承(0x4FEB48) 15=被消灭+继承人之争(0x4FEADC) 16=一族灭亡(0x4FEA90) 17=首府陷落但迁都【不灭亡】(0x4FEA38) 18=首府陷落灭亡+麾下武将全部下野(0x4FE9E0) 19=首府陷落一族灭亡(0x4FE980)。★下野名单只含麾下武将，君主走一族灭亡/被消灭 ⇒ 君主不会变成可录用的在野武将。引用点 0x40E64D/0x44BED7/0x44C4AF/0x44C649/0x44C69A；事件消息队列指针 0x6013AC",
+  "fac_arr": 6280116,
+  "fac_arr_note": "武将→势力数组（+idx*4）。值域仅三类：势力号1..11 / 0=在野 / -1=退场。全程序只有 cmp 只读比较，无直接写点（0x4492FA 处把基址当参数传出）",
+  "loc_arr": 6149208,
+  "loc_arr_note": "武将所在城（城号-1）。实测：在野者位置必有效；势力=-1 者位置必=-1（互斥两态）",
+  "lords_idx": {
+    "董卓": 290,
+    "袁绍": 12,
+    "袁术": 10,
+    "公孙瓒": 138,
+    "孙坚": 229,
+    "曹操": 221,
+    "刘备": 353,
+    "刘表": 354,
+    "刘璋": 349,
+    "陶谦": 287,
+    "马腾": 302,
+    "韩遂": 90
+  },
+  "lords_idx_note": "190年剧本只有 11 个正式势力君主(1..11)。张鲁263/公孙度139/刘虞348 等史实诸侯在本作里开局即为在野武将(势力=0)，可被录用 —— ⛔别把他们当君主看"
+}

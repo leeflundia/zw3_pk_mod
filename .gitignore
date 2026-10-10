@@ -1,0 +1,25 @@
+# 构建产物（不入库）
+build/
+
+# 编译暂存目录（仓库路径为纯 ASCII 时 build.sh 默认用它）
+.build-tmp/
+
+# 编译中间件
+*.o
+
+# Python 缓存
+__pycache__/
+*.pyc
+
+# 本地备份与日志
+*.bak
+*.bak_*
+*.log
+zydiag/
+
+# 二进制（发布走 Release / 压缩包；误拷入仓库时勿提交）
+*.dll
+*.exe
+
+# ⚠ 注意：src/fwd.S 与 src/fwd_dxgi.S 是源码（大写 .S）
+#    请勿添加 *.s 忽略规则（Windows git 大小写不敏感会误伤）
