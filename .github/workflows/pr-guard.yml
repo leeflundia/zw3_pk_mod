@@ -1,0 +1,68 @@
+name: PR 红线检查
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 检查版权红线与产物文件
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || 'HEAD~1' }}
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}" --depth=50 || true
+            FILES=$(git diff --name-only "origin/${{ github.base_ref }}"...HEAD)
+          else
+            FILES=$(git diff --name-only HEAD~1...HEAD || git ls-files)
+          fi
+          echo "变更文件："; echo "$FILES"
+          FAIL=0
+
+          # 1) 禁止二进制/产物入库
+          for f in $FILES; do
+            case "$f" in
+              *.dll|*.exe|*.o|*.so|*.a|build/*)
+                echo "::error file=$f::禁止提交构建产物/二进制（红线2）"; FAIL=1;;
+              *.bcv|*.bmp|*.png|*.jpg|*.jpeg|*.gif|*.webp|*.psd|*.tga)
+                echo "::error file=$f::禁止提交图片素材（红线1：素材线独立于本仓库）"; FAIL=1;;
+              *.7z|*.zip|*.rar|*.tar|*.gz)
+                echo "::error file=$f::禁止提交压缩包（红线1/2）"; FAIL=1;;
+            esac
+          done
+
+          # 2) 敏感信息扫描（网盘/邮箱/IP/本机路径）；.github/ 模板豁免（官方渠道链接合法存在）
+          PAT='pan\.baidu\.com|pan\.quark\.cn|[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:[0-9]{2,5}|[A-Za-z]:\\\\Users\\\\|[A-Za-z]:\\\\Game'
+          for f in $FILES; do
+            [ -f "$f" ] || continue
+            case "$f" in .github/*) continue;; esac
+            if grep -I -nE "$PAT" "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::疑似含网盘链接/内网地址/本机绝对路径（红线3），请清理"
+              grep -I -nE "$PAT" "$f" | head -3
+              FAIL=1
+            fi
+          done
+
+          # 3) shell 脚本行尾必须 LF
+          for f in $FILES; do
+            case "$f" in *.sh)
+              if [ -f "$f" ] && grep -q $'\r' "$f"; then
+                echo "::error file=$f::shell 脚本含 CRLF 行尾，会导致构建失败"; FAIL=1
+              fi;;
+            esac
+          done
+
+          if [ "$FAIL" = "1" ]; then
+            echo "❌ 红线检查未通过，请对照 CONTRIBUTING.md 修正后重新提交"
+            exit 1
+          fi
+          echo "✅ 红线检查通过"

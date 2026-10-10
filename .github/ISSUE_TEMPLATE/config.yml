@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用问题先看贴吧发布帖
+    url: https://tieba.baidu.com/p/11093282325
+    about: 安装、玩不起来等非代码问题请优先在发布帖回帖（作者活跃在那边），这里只收代码与构建相关 issue。
