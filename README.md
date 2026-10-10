@@ -62,6 +62,10 @@ zw3_pk_mod/
 | [docs/BUILD.md](docs/BUILD.md) | 构建指南 / 踩坑纪律 / 复现核验标准 |
 | [docs/GAME-VERSION.md](docs/GAME-VERSION.md) | 目标游戏版本要求（MD5 核对） |
 
+## 参与贡献
+
+想提 PR 或报 Bug？请先读 **[CONTRIBUTING.md](CONTRIBUTING.md)**（三条红线 + 开发环境 + 验收标准）。PR 会自动经过红线检查（CI），不符合的会被拦截。
+
 ## 复现核验（黄金标准）
 
 本工程可**逐字节复现**历史构建产物——与工程留档对比，残差仅剩"编译时间戳 + 输出文件名字段"（代码段零差异）。详见 [docs/BUILD.md](docs/BUILD.md) 的"复现核验"一节。
